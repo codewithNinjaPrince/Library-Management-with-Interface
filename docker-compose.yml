@@ -1,0 +1,39 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: libtrack-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - libtrack_mongo_data:/data/db
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: libtrack-backend
+    restart: unless-stopped
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      DATABASE_NAME: libtrack
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mongo
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: libtrack-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://127.0.0.1:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  libtrack_mongo_data:
