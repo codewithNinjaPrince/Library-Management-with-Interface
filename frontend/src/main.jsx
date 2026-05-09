@@ -265,6 +265,7 @@ function AuthScreen({ onAuth, notify, toast }) {
 
 function BooksPanel({ auth, notify }) {
   const [books, setBooks] = useState([]);
+  const [query, setQuery] = useState("");
   const [form, setForm] = useState({
     title: "",
     author: "",
@@ -276,6 +277,7 @@ function BooksPanel({ auth, notify }) {
   });
 
   const canManage = ["admin", "user"].includes(auth.role);
+  const visibleBooks = filterRows(books, query, ["_id", "title", "author", "isbn", "category", "shelf_location"]);
 
   async function load() {
     setBooks(await apiRequest("/api/v1/books/", {}, auth));
@@ -322,10 +324,10 @@ function BooksPanel({ auth, notify }) {
         </Panel>
       )}
       <Panel title="Book Inventory" icon={BookOpen} wide={!canManage}>
-        <Toolbar onRefresh={load} />
+        <Toolbar onRefresh={load} query={query} onQueryChange={setQuery} placeholder="Search books by title, author, ISBN, category, or ID" />
         <DataTable
-          columns={["title", "author", "isbn", "category", "available_copies", "shelf_location"]}
-          rows={books}
+          columns={["_id", "title", "author", "isbn", "category", "available_copies", "shelf_location"]}
+          rows={visibleBooks}
           empty="No books found"
         />
       </Panel>
@@ -335,7 +337,9 @@ function BooksPanel({ auth, notify }) {
 
 function MembersPanel({ auth, notify }) {
   const [members, setMembers] = useState([]);
+  const [query, setQuery] = useState("");
   const [form, setForm] = useState({ name: "", email: "", phone: "", course: "" });
+  const visibleMembers = filterRows(members, query, ["_id", "name", "email", "phone", "course"]);
 
   async function load() {
     setMembers(await apiRequest("/api/v1/members/", {}, auth));
@@ -378,17 +382,18 @@ function MembersPanel({ auth, notify }) {
         </form>
       </Panel>
       <Panel title="Member Directory" icon={Users}>
-        <Toolbar onRefresh={load} />
+        <Toolbar onRefresh={load} query={query} onQueryChange={setQuery} placeholder="Search members by name, email, phone, course, or ID" />
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-zinc-200 text-xs uppercase text-zinc-500">
               <tr>
-                {["name", "email", "phone", "course", "action"].map((column) => <th key={column} className="px-3 py-3">{column}</th>)}
+                {["id", "name", "email", "phone", "course", "action"].map((column) => <th key={column} className="px-3 py-3">{column}</th>)}
               </tr>
             </thead>
             <tbody>
-              {members.map((member) => (
+              {visibleMembers.map((member) => (
                 <tr key={member._id} className="border-b border-zinc-100">
+                  <td className="max-w-[210px] break-all px-3 py-3 font-mono text-xs text-zinc-500">{member._id}</td>
                   <td className="px-3 py-3">{member.name}</td>
                   <td className="px-3 py-3">{member.email}</td>
                   <td className="px-3 py-3">{member.phone}</td>
@@ -413,6 +418,14 @@ function MembersPanel({ auth, notify }) {
 function BorrowingPanel({ auth, notify }) {
   const [form, setForm] = useState({ member_id: "", book_id: "" });
   const [history, setHistory] = useState([]);
+  const [books, setBooks] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [bookQuery, setBookQuery] = useState("");
+  const [memberQuery, setMemberQuery] = useState("");
+  const availableBooks = filterRows(books, bookQuery, ["_id", "title", "author", "isbn", "category"]);
+  const visibleMembers = filterRows(members, memberQuery, ["_id", "name", "email", "phone", "course"]);
+  const selectedBook = books.find((book) => book._id === form.book_id);
+  const selectedMember = members.find((member) => member._id === form.member_id);
 
   async function borrowBook(event) {
     event.preventDefault();
@@ -441,7 +454,17 @@ function BorrowingPanel({ auth, notify }) {
     }
   }
 
+  async function loadOptions() {
+    const loadedBooks = await apiRequest("/api/v1/books/", {}, auth);
+    setBooks(loadedBooks);
+
+    if (["admin", "user"].includes(auth.role)) {
+      setMembers(await apiRequest("/api/v1/members/", {}, auth));
+    }
+  }
+
   useEffect(() => {
+    loadOptions().catch((error) => notify(error.message, "error"));
     loadHistory().catch(() => {});
   }, []);
 
@@ -449,8 +472,51 @@ function BorrowingPanel({ auth, notify }) {
     <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
       <Panel title="Borrow / Return" icon={Library}>
         <form onSubmit={borrowBook} className="grid gap-3">
-          <TextInput label="Member ID" value={form.member_id} onChange={(value) => setForm({ ...form, member_id: value })} />
-          <TextInput label="Book ID" value={form.book_id} onChange={(value) => setForm({ ...form, book_id: value })} />
+          {["admin", "user"].includes(auth.role) ? (
+            <SearchSelect
+              label="Member"
+              query={memberQuery}
+              onQueryChange={setMemberQuery}
+              selected={selectedMember ? `${selectedMember.name} · ${selectedMember.email}` : ""}
+              placeholder="Search member by name, email, phone, course, or ID"
+              items={visibleMembers}
+              getKey={(member) => member._id}
+              renderItem={(member) => (
+                <>
+                  <span className="font-medium">{member.name}</span>
+                  <span className="text-zinc-500">{member.email}</span>
+                  <span className="break-all font-mono text-xs text-zinc-400">{member._id}</span>
+                </>
+              )}
+              onSelect={(member) => {
+                setForm({ ...form, member_id: member._id });
+                setMemberQuery("");
+              }}
+            />
+          ) : (
+            <TextInput label="Member ID" value={form.member_id} onChange={(value) => setForm({ ...form, member_id: value })} />
+          )}
+          <SearchSelect
+            label="Book"
+            query={bookQuery}
+            onQueryChange={setBookQuery}
+            selected={selectedBook ? `${selectedBook.title} · ${selectedBook.available_copies} available` : ""}
+            placeholder="Search book by title, author, ISBN, category, or ID"
+            items={availableBooks}
+            getKey={(book) => book._id}
+            renderItem={(book) => (
+              <>
+                <span className="font-medium">{book.title}</span>
+                <span className="text-zinc-500">{book.author} · ISBN {book.isbn}</span>
+                <span className="break-all font-mono text-xs text-zinc-400">{book._id}</span>
+                <span className={book.available_copies > 0 ? "text-emerald-700" : "text-red-700"}>{book.available_copies} available</span>
+              </>
+            )}
+            onSelect={(book) => {
+              setForm({ ...form, book_id: book._id });
+              setBookQuery("");
+            }}
+          />
           <PrimaryButton icon={BookOpen}>Borrow Book</PrimaryButton>
           <button type="button" onClick={returnBook} className="inline-flex h-11 items-center justify-center gap-2 rounded border border-zinc-300 px-4 text-sm font-semibold hover:bg-zinc-100">
             <RefreshCw size={18} />
@@ -461,7 +527,7 @@ function BorrowingPanel({ auth, notify }) {
       <Panel title="Borrow History" icon={Activity}>
         {["admin", "user"].includes(auth.role) ? (
           <>
-            <Toolbar onRefresh={loadHistory} />
+            <Toolbar onRefresh={async () => { await loadOptions(); await loadHistory(); }} />
             <DataTable columns={["member_id", "book_id", "status", "borrow_date", "due_date", "return_date"]} rows={history} empty="No borrow records" />
           </>
         ) : (
@@ -679,14 +745,63 @@ function PrimaryButton({ children, icon: Icon, ...props }) {
   );
 }
 
-function Toolbar({ onRefresh }) {
+function Toolbar({ onRefresh, query, onQueryChange, placeholder = "Search" }) {
   return (
-    <div className="mb-3 flex justify-end">
+    <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {onQueryChange ? (
+        <input
+          className="h-10 w-full rounded border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 sm:max-w-md"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder={placeholder}
+        />
+      ) : (
+        <span />
+      )}
       <button onClick={onRefresh} className="inline-flex h-9 items-center gap-2 rounded border border-zinc-300 px-3 text-sm font-medium hover:bg-zinc-100" title="Refresh">
         <RefreshCw size={16} />
         Refresh
       </button>
     </div>
+  );
+}
+
+function SearchSelect({ label, query, onQueryChange, selected, placeholder, items, getKey, renderItem, onSelect }) {
+  const showItems = query.trim().length > 0 || !selected;
+
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      {selected && (
+        <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          Selected: {selected}
+        </div>
+      )}
+      <input
+        className="h-11 rounded border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100"
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        placeholder={placeholder}
+      />
+      {showItems && (
+        <div className="max-h-72 overflow-auto rounded border border-zinc-200 bg-white">
+          {items.length ? (
+            items.slice(0, 12).map((item) => (
+              <button
+                type="button"
+                key={getKey(item)}
+                onClick={() => onSelect(item)}
+                className="grid w-full gap-1 border-b border-zinc-100 px-3 py-2 text-left text-sm hover:bg-zinc-50"
+              >
+                {renderItem(item)}
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-3 text-sm text-zinc-500">No matches found</div>
+          )}
+        </div>
+      )}
+    </label>
   );
 }
 
@@ -753,6 +868,15 @@ function Toast({ toast }) {
 
 function labelize(value) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function filterRows(rows, query, keys) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return rows;
+
+  return rows.filter((row) =>
+    keys.some((key) => String(row[key] ?? "").toLowerCase().includes(normalizedQuery))
+  );
 }
 
 createRoot(document.getElementById("root")).render(<App />);
